@@ -7,7 +7,18 @@ import numpy as np
 import cv2 # OpenCV for image manipulation and FFT
 
 class ImageDatasetNoLabels(Dataset):
-    def __init__(self, root_dir, base_transform=None, fft_post_transform=None):
+    def __init__(self, root_dir,
+                 base_transform = transforms.Compose([
+        transforms.Resize(256),              # Resize shortest side to 256 pixels
+        transforms.CenterCrop(224),          # Crop to 224x224 from the center
+        transforms.ToTensor(),               # Convert to Tensor (scales to [0.0, 1.0], C, H, W)
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # Normalize (ImageNet stats)
+    ]), 
+                 fft_post_transform=transforms.Compose([
+        # If your network expects 3 channels for FFT input, uncomment this:
+        # transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+        transforms.Normalize(mean=[0.5], std=[0.5]) # Placeholder: Replace with actual FFT mean/std
+    ])):
         """
         Initializes the dataset.
 
@@ -113,12 +124,7 @@ if __name__ == "__main__":
 
     # 2. Define a BASE TRANSFORM that all images will go through first.
     # This transform should include resizing/cropping to a consistent size (e.g., 224x224).
-    base_image_transforms = transforms.Compose([
-        transforms.Resize(256),              # Resize shortest side to 256 pixels
-        transforms.CenterCrop(224),          # Crop to 224x224 from the center
-        transforms.ToTensor(),               # Convert to Tensor (scales to [0.0, 1.0], C, H, W)
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # Normalize (ImageNet stats)
-    ])
+    
 
     # 3. Define FFT result POST-PROCESSING transforms.
     # Note: Mean and std here are placeholders. You should calculate them
