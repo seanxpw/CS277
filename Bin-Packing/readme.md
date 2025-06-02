@@ -1,44 +1,91 @@
-# First Fit Data Generator with Packed Bin Output
+# Bin Packing Datasets for Approximation and Optimal Solutions 📦
 
-This C++ program implements the First Fit algorithm for the bin packing problem and generates a data file. Each line in the output file contains:
-1.  A list of randomly generated item sizes (input) on the left side of the " | " separator.
-2.  A string representation of the bins and their contents after applying the First Fit algorithm to these items, on the right side of the " | " separator.
+This document describes two datasets generated for the Bin Packing Problem (BPP). The goal of the BPP is to pack a set of items of given sizes into the minimum number of bins, each with a fixed capacity.
 
-**Output Format Details (Right Side):**
-The representation of packed bins is a string where:
-* Items within each bin are comma-separated (e.g., `item1,item2,item3`).
-* Bins themselves are separated by a semicolon (`;`).
-* Example: If First Fit results in Bin 1 containing items `23,61` and Bin 2 containing items `40,11,29`, the right side string would be `23,61;40,11,29`.
+These datasets are designed for tasks such as training machine learning models to predict bin packing configurations or to learn the behavior of specific packing algorithms.
 
-The items are processed by the First Fit algorithm in the order they were randomly generated.
+## Datasets Overview 📊
 
-## How to Compile and Run
+Two distinct datasets are provided:
 
-1.  **Save the Code**: Save the C++ code as `first_fit_generator.cpp` (or any other `.cpp` filename).
-2.  **Compile**: Use a C++ compiler (like g++) to compile the code. You'll need C++11 or newer for features like `<random>`.
-    ```bash
-    g++ first_fit_generator.cpp -o first_fit_generator -std=c++11
-    ```
-3.  **Run**: Execute the compiled program.
-    ```bash
-    ./first_fit_generator
-    ```
-    This will create a file (default: `first_fit_packed_data.txt`) in the same directory.
+1.  **`Bin Packing FF (First Fit) Dataset`**: Generated using the **First Fit** heuristic algorithm. This is an approximate but fast algorithm.
+    * **Location**: `Bin-Packing/Approx/bin_packing_ff_dataset_20250601_195502/`
+2.  **`Bin Packing Optimal Dataset`**: Generated using a **backtracking algorithm** that finds the **optimal (minimum) number of bins**. This algorithm is exact but computationally intensive, hence typically used for smaller problem instances.
+    * **Location**: `Bin-Packing/Optimal/bin_packing_optimal_dataset_20250601_200335/`
 
-## Modifying Data Generation Parameters
+Both datasets share a common structure for their input and label files, detailed below.
 
-To change the characteristics of the generated data, you can modify the constant variables defined at the beginning of the `main()` function in the `first_fit_generator.cpp` file.
+Some details can be found at `Bin-Packing/Approx/bin_packing_ff_dataset_20250601_195502/dataset_readme.txt` and `/home/csgrads/xwang605/CS277/Bin-Packing/Optimal/bin_packing_optimal_dataset_20250601_200335/dataset_readme.txt`
+---
 
-```cpp
-// Inside main() function:
+## File Structure and Format 📁
 
-    // --- Configuration Parameters for Data Generation ---
-    const int NUM_LINES = 3000;           // Number of lines to generate in the output file
-    const int ITEMS_PER_LINE = 2000;      // Number of items to generate for each line
-                                          // Note: A large number of items can make the packed bin string very long.
-                                          // You might adjust this for readability or specific needs.
-    const int MAX_ITEM_SIZE = 100;        // Maximum size of a randomly generated item
-    const int MIN_ITEM_SIZE = 1;          // Minimum size of a randomly generated item
-    const int BIN_CAPACITY = 100;         // Capacity of each bin (for the First Fit algorithm)
-    const std::string OUTPUT_FILENAME = "first_fit_packed_data.txt"; // Name of the output file
-    // --- End of Configuration Parameters ---
+Each dataset directory contains two NumPy binary files (`.npy`):
+
+* `input.npy`: Contains the input data (item sizes for each sample).
+* `label.npy`: Contains the corresponding labels (bin packing configurations).
+
+### 1. `input.npy` (Input Data)
+
+* **Description**: This file stores the item sizes for each problem instance (sample).
+* **Data Type**: `int16`
+* **Shape**: `(num_samples, items_per_sample)`
+    * `num_samples`: The total number of problem instances in the dataset.
+    * `items_per_sample`: The number of items in each problem instance. This value differs between the FF and Optimal datasets due to the computational demands of the optimal solver.
+        * For FF Dataset: `(1000, 200)` (1000 samples, each with 200 items)
+        * For Optimal Dataset: `(1000, 30)` (1000 samples, each with 30 items)
+* **Content**: Each row `input[i]` is a 1D array representing the sizes of items for the `i`-th sample.
+    * Example: `input[0] = [item1_size, item2_size, ..., itemN_size]`
+
+### 2. `label.npy` (Label Data - Bin Configuration)
+
+* **Description**:  This file stores the bin packing configuration for each corresponding input sample, as determined by either the First Fit algorithm or the Optimal (backtracking) algorithm. **for each sample, the result is represented by a fixed size 2D matrix. each row represents a bin, with in a row (bin) the elements are the weight. At first all elements are 0 meaning no items filled in any bins, with the progress of bin-packing, some 0s will be repalced by weights. You can calculated the number of non-zero rows to determine how many bins are used.**
+* **Data Type**: `int16`
+* **Shape**: `(num_samples, max_bins, max_items_per_bin)`
+    * For both FF and Optimal Datasets: `(1000, 100, 100)`
+        * `num_samples`: The total number of problem instances (1000).
+        * `max_bins`: The maximum number of bins that can be represented in the label matrix (fixed at 100, calculated as `bin_capacity`).
+        * `max_items_per_bin`: The maximum number of items that can be represented within a single bin in the label matrix (fixed at 100, calculated as `bin_capacity // min_item_size`).
+* **Content**: Each `label[i]` is a 2D matrix representing the bin packing for the `i`-th sample.
+    * `label[i, j, k] = item_size`: The `k`-th item (slot) in the `j`-th bin for the `i`-th sample has size `item_size`.
+    * A value of `0` indicates an empty item slot or an entirely unused bin (if all slots in a bin row are 0).
+* **Interpretation**:
+    * To find the items in the first bin of the first sample: `label[0, 0, :]`. Non-zero values are the item sizes.
+    * **Number of Bins Used**: For a given sample `s`, the number of bins actually used can be determined by finding the highest bin index `j` for which `label[s, j, :]` contains at least one non-zero item. Alternatively, count the number of rows `label[s, j, :]` that are not all zeros up to the actual number of bins used by the algorithm (which is generally much less than `max_bins`).
+
+---
+
+## Dataset Generation Parameters ⚙️
+
+These parameters were used to generate the datasets and are crucial for understanding their characteristics:
+
+Adjust them in `main`
+
+**Common Parameters for both datasets:**
+
+* **Min Item Size**: 1
+* **Max Item Size**: 100
+* **Bin Capacity**: 100
+* **Label Matrix Dimensions (Calculated)**:
+    * `max_bins` (rows): 100 (derived from `bin_capacity`)
+    * `max_items_per_bin` (columns): 100 (derived from `bin_capacity // min_item_size`)
+
+**Specific Parameters:**
+
+* **First Fit (FF) Dataset**:
+    * Number of Samples: 1000
+    * Items per Sample: 200
+    * Algorithm: First Fit heuristic.
+* **Optimal Dataset**:
+    * Number of Samples: 1000
+    * Items per Sample: 30 (kept small due to the high computational cost of the exact algorithm).
+    * Algorithm: Backtracking to find the optimal (minimum) number of bins.
+
+**Important Notes on Label Matrix Truncation**:
+
+* The `label.npy` matrix has fixed dimensions (`100x100` for bins and items-per-bin).
+* If an algorithm (theoretically) uses more than 100 bins for a sample, or if a single bin contains more than 100 items, the representation in `label.npy` will be truncated.
+    * Given `Bin Capacity = 100` and `Min Item Size = 1`, a single bin cannot physically hold more than 100 items of `min_item_size`. So, the `max_items_per_bin = 100` dimension is generally sufficient.
+    * The number of bins used is typically much less than 100, especially for the `Optimal Dataset` with only 30 items per sample (max 30 bins). For the `FF Dataset` with 200 items, it's also unlikely to exceed 100 bins with a capacity of 100 unless item sizes are pathologically small and numerous (which is not the case here, as total items are 200).
+
+---
