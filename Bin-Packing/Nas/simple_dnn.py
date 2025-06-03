@@ -223,9 +223,11 @@ def eval(model, root_dir):
     print(t0.timeit(100))
     print(t1.timeit(100))
     label = torch.Tensor(dataset.label).to('cuda')
-    predictions = model(inputs)
-    mse = torch.nn.functional.mse_loss(predictions, label.unsqueeze(-1))
-    print("mse for all validation samples:", mse)
+    label = torch.round(label * dataset.size)
+    predictions = model(inputs).flatten()
+    predictions = torch.round(predictions * dataset.size)
+    accuracy = (label == predictions).float().mean().item()
+    print("accuracy for all validation samples:", accuracy)
 
 
 if __name__ == "__main__":
