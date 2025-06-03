@@ -7,58 +7,50 @@ import numpy as np
 import cv2 # OpenCV for image manipulation and Canny edge detection
 from pathlib import Path # For robust path handling
 
-class CannyEdgeDetection(Dataset):
+class CannyEdgeDetectionFixed(Dataset): # Renamed for clarity
     def __init__(self, root_dir,
-                 base_transform = transforms.Compose([
-                    transforms.Resize(256),              # Resize shortest side to 256 pixels
-                    transforms.CenterCrop(224),          # Crop to 224x224 from the center
-                    transforms.ToTensor(),               # Convert to Tensor (scales to [0.0, 1.0], C, H, W)
-                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # Normalize (ImageNet stats)
+                 base_transform_spatial = transforms.Compose([
+                     transforms.Resize(256),      # Resize shortest side to 256 pixels
+                     transforms.CenterCrop(224)   # Crop to 224x224 from the center
+                 ]),
+                 base_transform_tensor = transforms.Compose([
+                     transforms.ToTensor(),       # Convert to Tensor (scales to [0.0, 1.0], C, H, W)
+                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # Normalize (ImageNet stats)
                  ]),
                  edge_params=(100, 200), # Default Canny thresholds: (low_threshold, high_threshold)
                  edge_post_transform=transforms.Compose([
-                    # Edge maps are typically single-channel binary (0/1 or 0/255).
-                    # Normalize it to fit your model's input expectations.
-                    # If your network expects 3 channels, uncomment this:
-                    # transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
-                    transforms.Normalize(mean=[0.5], std=[0.5]) # Placeholder: Replace with actual edge map mean/std
+                     # Edge maps are typically single-channel binary (0/1 or 0/255).
+                     # Normalize it to fit your model's input expectations.
+                     # If your network expects 3 channels, uncomment this:
+                     # transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+                     transforms.Normalize(mean=[0.5], std=[0.5]) # Placeholder: Replace with actual edge map mean/std
                  ])):
         """
-        Initializes the dataset to load all images recursively from a directory
-        and apply base transformations and Canny edge detection.
+        Initializes the dataset with fixed view consistency for Canny edge detection.
 
         Args:
             root_dir (string): The root directory containing all image files.
-                               It can contain subdirectories (recursive scan).
-                               Example structure:
-                               root_dir/
-                               ├── image1.jpg
-                               ├── subdir/
-                               │   └── image2.png
-                               └── ...
-            base_transform (callable, optional): Base transforms to apply to the raw PIL Image.
-                                                 Edge detection will be performed on the output of this transform.
-                                                 This should typically include Resize, Crop, ToTensor, Normalize.
+            base_transform_spatial (callable, optional): Spatial transforms (Resize, Crop)
+                                                         applied to the PIL image first.
+            base_transform_tensor (callable, optional): Transforms (ToTensor, Normalize)
+                                                        applied after spatial transforms for the base image.
             edge_params (tuple): A tuple (low_threshold, high_threshold) for Canny edge detector.
             edge_post_transform (callable, optional): Transforms to apply to the Canny edge map
                                                       after it's calculated and converted to a tensor.
         """
         self.root_dir = Path(root_dir) # Use Path for easier handling
-        self.base_transform = base_transform
+        self.base_transform_spatial = base_transform_spatial
+        self.base_transform_tensor = base_transform_tensor
         self.edge_params = edge_params
         self.edge_post_transform = edge_post_transform
         self.image_paths = []
 
-        # --- RECURSIVE IMAGE COLLECTION ---
-        # Collect all image file paths recursively from the root directory
         for dirpath, _, filenames in os.walk(self.root_dir):
             for img_name in filenames:
                 img_path = os.path.join(dirpath, img_name)
                 if self._is_image_file(img_name):
                     self.image_paths.append(img_path)
-        # --- END RECURSIVE IMAGE COLLECTION ---
         
-        # Optionally sort paths for consistent ordering, though not strictly needed without splitting
         self.image_paths.sort()
 
         if not self.image_paths:
@@ -77,130 +69,170 @@ class CannyEdgeDetection(Dataset):
 
     def __getitem__(self, idx):
         """
-        Retrieves an image by index, applies base transformations, computes its Canny edge map,
-        and returns both the processed base image tensor and the processed edge map tensor.
+        Retrieves an image by index, applies base transformations, computes its Canny edge map
+        (ensuring view consistency), and returns both the processed base image tensor
+        and the processed edge map tensor.
         """
-        # Ensure idx is a standard integer if it comes as a PyTorch tensor (e.g., from DataLoader)
         if torch.is_tensor(idx):
             idx = idx.item()
 
         img_path = self.image_paths[idx]
-
-        # 1. Load the original image using PIL
         original_image_pil = Image.open(img_path).convert('RGB')
 
-        # 2. Apply base_transform to get the "processed" image Tensor
-        # This tensor will be the input for the raw image branch of your network.
-        # It also determines the size for edge detection.
-        if self.base_transform:
-            processed_base_image_tensor = self.base_transform(original_image_pil)
+        # 1. Apply common spatial transformations to the original PIL image
+        if self.base_transform_spatial:
+            pil_after_spatial_transforms = self.base_transform_spatial(original_image_pil)
         else:
-            # If no base_transform is provided, at least convert to a tensor
-            processed_base_image_tensor = transforms.ToTensor()(original_image_pil)
+            pil_after_spatial_transforms = original_image_pil # Should ideally have spatial transforms
 
-        # 3. Convert the processed_base_image_tensor back to a NumPy array for Canny
-        # Ensure the tensor is on CPU and permute to H, W, C format for OpenCV/NumPy
-        image_for_edge_np = processed_base_image_tensor.permute(1, 2, 0).cpu().numpy()
-        
-        # Scale pixels back to 0-255 range and convert to uint8.
-        # Canny typically expects uint8 images.
-        image_for_edge_np_scaled = (image_for_edge_np * 255).astype(np.uint8) 
+        # 2. Path A: Create processed_base_image_tensor
+        # Apply ToTensor and Normalize to the spatially transformed PIL image
+        if self.base_transform_tensor:
+            processed_base_image_tensor = self.base_transform_tensor(pil_after_spatial_transforms)
+        else:
+            # Fallback: if no tensor/norm transform, just convert the spatially transformed PIL to tensor
+            processed_base_image_tensor = transforms.ToTensor()(pil_after_spatial_transforms)
+
+
+        # 3. Path B: Create image for Canny edge detection from the *same* spatially transformed PIL image
+        # Convert the spatially transformed PIL image to a NumPy array (HxWxC, uint8, [0-255])
+        image_for_edge_np_uint8 = np.array(pil_after_spatial_transforms)
         
         # Convert to grayscale for Canny edge detection
-        if image_for_edge_np_scaled.shape[2] == 3: # If it's an RGB image
-            image_gray_for_edge = cv2.cvtColor(image_for_edge_np_scaled, cv2.COLOR_RGB2GRAY)
-        else: # Already grayscale (1 channel)
-            image_gray_for_edge = image_for_edge_np_scaled.squeeze() # Remove channel dim if present
+        if image_for_edge_np_uint8.ndim == 3 and image_for_edge_np_uint8.shape[2] == 3: # If it's an RGB image
+            image_gray_for_edge = cv2.cvtColor(image_for_edge_np_uint8, cv2.COLOR_RGB2GRAY)
+        elif image_for_edge_np_uint8.ndim == 2: # Already grayscale
+            image_gray_for_edge = image_for_edge_np_uint8
+        else: # Should not happen if .convert('RGB') was used and spatial transforms are typical
+            raise ValueError(f"Image {img_path} after spatial transform resulted in unexpected shape for grayscale conversion: {image_for_edge_np_uint8.shape}")
+
 
         # 4. Perform Canny Edge Detection
         low_threshold, high_threshold = self.edge_params
-        edge_map_np = cv2.Canny(image_gray_for_edge, low_threshold, high_threshold)
+        edge_map_np = cv2.Canny(image_gray_for_edge, low_threshold, high_threshold) # Output is uint8, 0 or 255
 
-        # 5. Post-process the Edge Map (normalize, convert to tensor)
-        # Canny output is typically 0 or 255 (uint8). Normalize to [0, 1] for consistency.
-        edge_map_normalized = edge_map_np.astype(np.float32) / 255.0
+        # 5. Post-process the Edge Map
+        # Normalize Canny output (0 or 255) to [0.0, 1.0] float for consistency before further transforms.
+        edge_map_normalized_float = edge_map_np.astype(np.float32) / 255.0
         
         # Convert to PyTorch tensor and add a channel dimension: [1, H, W]
-        edge_tensor = torch.from_numpy(edge_map_normalized).unsqueeze(0) 
+        edge_tensor = torch.from_numpy(edge_map_normalized_float).unsqueeze(0) 
 
         # Apply any specified post-edge transforms
         if self.edge_post_transform:
             processed_edge_tensor = self.edge_post_transform(edge_tensor)
         else:
-            processed_edge_tensor = edge_tensor # Return as is if no post-transform
+            processed_edge_tensor = edge_tensor 
 
-        # Return both the base image tensor and the edge map tensor
         return processed_base_image_tensor, processed_edge_tensor
 
 
 if __name__ == "__main__":
-    # 1. Prepare a dummy dataset directory with some images for demonstration
-    # This directory can contain subfolders as well.
-    dataset_root = "my_images_no_split"
+    dataset_root = "my_images_canny_fixed"
     os.makedirs(os.path.join(dataset_root, "subdir_a"), exist_ok=True)
     os.makedirs(os.path.join(dataset_root, "subdir_b"), exist_ok=True)
 
-    # Create 5 dummy images, some in subdirectories
-    Image.new('RGB', (80, 80), color = 'red').save(os.path.join(dataset_root, 'img_root.jpg'))
-    Image.new('RGB', (90, 90), color = 'green').save(os.path.join(dataset_root, 'subdir_a', 'img_sub_a1.png'))
-    Image.new('RGB', (70, 70), color = 'blue').save(os.path.join(dataset_root, 'subdir_a', 'img_sub_a2.jpeg'))
-    # Create a simple image with a clear edge for better visualization of Canny
-    dummy_img_with_edge = Image.new('RGB', (100, 100), color=(0,0,0))
-    for x in range(100):
-        for y in range(100):
-            if x > 50:
-                dummy_img_with_edge.putpixel((x, y), (255, 255, 255)) # White half
-            else:
-                dummy_img_with_edge.putpixel((x, y), (0, 0, 0)) # Black half
-    dummy_img_with_edge.save(os.path.join(dataset_root, 'subdir_b', 'img_sub_b1_edge.png'))
-    Image.new('RGB', (110, 110), color = 'yellow').save(os.path.join(dataset_root, 'subdir_b', 'img_sub_b2.bmp'))
+    # Create dummy images
+    Image.new('RGB', (300, 400), color = 'red').save(os.path.join(dataset_root, 'img_root.jpg'))
+    Image.new('RGB', (400, 300), color = 'green').save(os.path.join(dataset_root, 'subdir_a', 'img_sub_a1.png'))
+    
+    dummy_img_with_edge_orig_size = (280,320) # Original size different from crop
+    dummy_img_with_edge = Image.new('RGB', dummy_img_with_edge_orig_size, color=(0,0,0))
+    # Create a white rectangle in the middle for a clear edge
+    rect_w, rect_h = dummy_img_with_edge_orig_size[0]//2, dummy_img_with_edge_orig_size[1]//2
+    start_x, start_y = dummy_img_with_edge_orig_size[0]//4, dummy_img_with_edge_orig_size[1]//4
+    for x_offset in range(rect_w):
+        for y_offset in range(rect_h):
+            dummy_img_with_edge.putpixel((start_x + x_offset, start_y + y_offset), (255,255,255))
+    dummy_img_with_edge.save(os.path.join(dataset_root, 'subdir_b', 'img_clear_edge.png'))
+    
+    print(f"Created dummy images in {dataset_root}")
 
+    # Define transform components as per the class's new __init__ structure
+    spatial_transforms = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224)
+    ])
+    tensor_transforms = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    # Example post-transform for Canny edge map (which is now [0,1] float before this)
+    edge_post_transforms = transforms.Compose([
+        # transforms.Lambda(lambda x: x.repeat(3, 1, 1)), # If model expects 3 channels
+        transforms.Normalize(mean=[0.5], std=[0.5]) # Normalize to [-1, 1] if needed
+    ])
 
-    # 2. Define a BASE TRANSFORM (using the default values in __init__ for this example)
-    # base_image_transforms = transforms.Compose([...]) # No need to define explicitly if using defaults
+    # Create the dataset instance
+    canny_dataset_fixed = CannyEdgeDetectionFixed(
+        root_dir=dataset_root,
+        base_transform_spatial=spatial_transforms,
+        base_transform_tensor=tensor_transforms,
+        edge_params=(50, 150), # Example Canny thresholds
+        edge_post_transform=edge_post_transforms
+    )
 
-    # 3. Define EDGE MAP POST-PROCESSING transforms (using the default values in __init__ for this example)
-    # edge_post_transforms = transforms.Compose([...]) # No need to define explicitly if using defaults
+    print(f"Number of images in the fixed Canny dataset: {len(canny_dataset_fixed)}")
 
-    # 4. Create the dataset instance. It will use the default transforms.
-    # You can also pass custom ones if needed:
-    # image_dataset = ImageDatasetNoLabels(
-    #     root_dir=dataset_root,
-    #     base_transform=my_custom_base_transforms,
-    #     edge_params=(30, 90), # Custom Canny thresholds
-    #     edge_post_transform=my_custom_edge_post_transforms
-    # )
-    image_dataset = CannyEdgeDetection(root_dir=dataset_root)
+    image_loader = DataLoader(canny_dataset_fixed, batch_size=1, shuffle=False, num_workers=0) 
 
-    print(f"Number of images in the dataset: {len(image_dataset)}") # Expected: 5
-
-    # 5. Create the DataLoader instance
-    batch_size = 2
-    # For inference or just reading, shuffle can be False, num_workers can be adjusted
-    image_loader = DataLoader(image_dataset, batch_size=batch_size, shuffle=False, num_workers=2) 
-
-    # 6. Iterate through the DataLoader and inspect the loaded data
-    print("\n--- Image Data Loading Example (No Labels, No Split) ---")
+    print("\n--- Fixed Canny Edge Detection Data Loading (Consistent View) ---")
     for i, (base_images, edge_maps) in enumerate(image_loader):
         print(f"Batch {i+1}:")
-        print(f"  Base Image Tensor Shape: {base_images.shape}")  # e.g., torch.Size([batch_size, 3, 224, 224])
-        print(f"  Edge Map Tensor Shape: {edge_maps.shape}")      # e.g., torch.Size([batch_size, 1, 224, 224])
+        print(f"  Base Image Tensor Shape: {base_images.shape}")
+        print(f"  Edge Map Tensor Shape:   {edge_maps.shape}")
         
-        # Verify that edge map dimensions match the base image's H, W
         assert edge_maps.shape[2] == base_images.shape[2] and \
                edge_maps.shape[3] == base_images.shape[3], \
                "Edge map dimensions do not match base image dimensions!"
-        if i == 0:
-            # For demonstration, you could optionally visualize one of the edge maps
-            # import matplotlib.pyplot as plt
-            # plt.imshow(edge_maps[0, 0].cpu().numpy(), cmap='gray')
-            # plt.title("Example Canny Edge Map")
-            # plt.show()
-            pass # Keep output clean for automated checks
-        if i >= 1: # Print only first two batches to avoid too much output
+
+        if i == 2: # Visualize the image with the clear edge (index 2 in sorted list)
+            try:
+                import matplotlib.pyplot as plt
+                plt.figure(figsize=(12, 6))
+                
+                # Visualize Base Image (approx original appearance)
+                plt.subplot(1, 2, 1)
+                mean = np.array([0.485, 0.456, 0.406])
+                std = np.array([0.229, 0.224, 0.225])
+                base_img_vis = base_images[0].permute(1,2,0).cpu().numpy() * std + mean
+                base_img_vis = np.clip(base_img_vis, 0, 1)
+                plt.imshow(base_img_vis)
+                plt.title(f"Base Image (Batch {i+1})")
+                plt.axis('off')
+
+                # Visualize Processed Canny Edge Map
+                plt.subplot(1, 2, 2)
+                # Inverse the example Normalize from edge_post_transform for display if it was applied
+                # edge_map_vis_tensor = edge_maps[0,0].cpu().numpy() * 0.5 + 0.5 # If Normalize(0.5,0.5) was used
+                # If no such Normalize or to see the [0,1] map before it:
+                # We need to get the map before edge_post_transform for raw [0,1] Canny output.
+                # For simplicity, let's assume edge_post_transform might make it [-1,1]
+                # and try to scale it back to a viewable range.
+                edge_map_display = edge_maps[0,0].cpu().numpy()
+                if edge_post_transforms: # If post-processing was applied, try to un-normalize for display
+                     # This depends on what edge_post_transform does.
+                     # If it was Normalize(0.5, 0.5), then:
+                     edge_map_display = edge_map_display * 0.5 + 0.5
+                edge_map_display = np.clip(edge_map_display,0,1)
+
+                plt.imshow(edge_map_display, cmap='gray')
+                plt.title(f"Processed Canny Edge Map (Batch {i+1})")
+                plt.axis('off')
+                
+                plt.savefig("canny_dataset_fixed_sample.png")
+                print("Saved sample visualization to canny_dataset_fixed_sample.png")
+                plt.close()
+            except ImportError:
+                print("Matplotlib not found. Skipping visualization.")
+            except Exception as e:
+                print(f"Error during visualization: {e}")
+        
+        if i >= 2: # Process a few samples for demo
             break
 
-    # Clean up the dummy data directory
+    # Clean up
     import shutil
-    shutil.rmtree(dataset_root)
-    print(f"\nCleaned up dummy dataset directory: {dataset_root}")
+    if os.path.exists(dataset_root):
+        shutil.rmtree(dataset_root)
+        print(f"\nCleaned up dummy dataset directory: {dataset_root}")
