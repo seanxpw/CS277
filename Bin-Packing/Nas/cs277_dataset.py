@@ -7,7 +7,7 @@ import numpy as np
 
 
 class CS277Dataset(Dataset):
-    def __init__(self, root_dir, train, transform=None):
+    def __init__(self, root_dir, train=None, transform=None):
         """
         Arguments:
             root_dir (string): Directory with all the data.
@@ -32,12 +32,13 @@ class CS277Dataset(Dataset):
             self.input = np.expand_dims(input_dup, axis=1).astype(np.float32)
             self.input = (self.input - 1) / (100 - 1)
             self.label /= self.size
-            if train:
-                self.input = self.input[:int(0.8 * len(self.input))]
-                self.label = self.label[:int(0.8 * len(self.label))]
-            else:
-                self.input = self.input[int(0.8 * len(self.input)):]
-                self.label = self.label[int(0.8 * len(self.label)):]
+            if train is not None:
+                if train:
+                    self.input = self.input[:int(0.8 * len(self.input))]
+                    self.label = self.label[:int(0.8 * len(self.label))]
+                else:
+                    self.input = self.input[int(0.8 * len(self.input)):]
+                    self.label = self.label[int(0.8 * len(self.label)):]
         else:
             raise RuntimeError(
                 f"Dataset files not found. Please ensure 'input.npy' and 'label.npy' exist in the specified directory ({root_dir}).")

@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.utils.data import random_split, DataLoader
 import pytorch_lightning as pl
+from pathlib import Path
 
 from cs277_dataset import CS277Dataset
 
@@ -202,6 +203,30 @@ class CS277DataModule(pl.LightningDataModule):
     def size(self):
         return self.problem_size
 
+def eval(model, root_dir):
+    import torch.utils.benchmark as benchmark
+    model = model.to('cuda')
+    dataset = CS277Dataset(root_dir=root_dir)
+    inputs = dataset.input
+    inputs = torch.Tensor(inputs).to('cuda')
+    model = model.to_torchscript(method="trace", example_inputs=inputs)
+    model = torch.jit.optimize_for_inference(torch.jit.script(model.eval()))
+    model(inputs) #warmup
+    t0 = benchmark.Timer(
+        stmt='model(inputs)',
+        description=f'take this long to run per sample for a batch of size {inputs.shape[0]}',
+        globals={'model': model, 'inputs': inputs})
+    t1 = benchmark.Timer(
+        stmt='model(inputs)',
+        description=f'take this long to run per sample for a batch of size 1',
+        globals={'model': model, 'inputs': inputs[0:1]})
+    print(t0.timeit(100))
+    print(t1.timeit(100))
+    label = torch.Tensor(dataset.label).to('cuda')
+    predictions = model(inputs)
+    mse = torch.nn.functional.mse_loss(predictions, label.unsqueeze(-1))
+    print("mse for all validation samples:", mse)
+
 
 if __name__ == "__main__":
     # 1) Instantiate the DataModule
@@ -211,6 +236,13 @@ if __name__ == "__main__":
         "root_dir": "/app/Bin-Packing/data/bin_packing_optimal_size=30_dataset_20250602_151119",
         "train": True,
     }
+
+    if Path('./bin-packing.ckpt').exists() or False:
+        print("Checkpoint already exists. Skipping training.")
+        mod = GraphCoverModel.load_from_checkpoint('bin-packing.ckpt')
+        eval(mod, data_args["root_dir"])
+        exit(0)
+
     dm = CS277DataModule(
         dataset_cls=CS277Dataset,
         data_args=data_args,
@@ -237,4 +269,4 @@ if __name__ == "__main__":
 
     # Optionally, test or save the checkpoint afterwards:
     # trainer.test(model, datamodule=dm)
-    # trainer.save_checkpoint("graph_cover.ckpt")
+    trainer.save_checkpoint("bin-packing.ckpt")
