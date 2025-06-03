@@ -5,13 +5,8 @@ FROM ${BASE_IMG}
 RUN apt-get update && \
     apt-get install -y apt-utils && \
     apt-get install -y vim cmake g++ unzip git wget python3-pip && \
-    pip install cmake --upgrade
-
-    # Update and install necessary packages
-RUN apt-get update && \
-apt-get install -y apt-utils && \
-apt-get install -y vim cmake g++ unzip git wget python3-pip && \
-pip install cmake --upgrade
+    pip install cmake --upgrade && \
+    pip install pytorch
 
 # Install Miniconda
 RUN mkdir -p ~/miniconda3 && \
