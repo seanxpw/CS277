@@ -311,7 +311,7 @@ def main(image_folder_path):
     ax1.legend(); ax1.grid(True, linestyle='--', alpha=0.7); ax1.set_yscale('log')
     plt.tight_layout(); plt.savefig("sobel_latency_comparison_pytorch.png")
     print("\nLatency comparison plot saved as sobel_latency_comparison_pytorch.png")
-    plt.show()
+    # plt.show()
 
 
 if __name__ == "__main__":
