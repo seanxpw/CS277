@@ -1,0 +1,10 @@
+[
+    {
+        "cell/0_1": "skip_connect",
+        "cell/0_2": "skip_connect",
+        "cell/1_2": "none",
+        "cell/0_3": "skip_connect",
+        "cell/1_3": "skip_connect",
+        "cell/2_3": "conv_3x3"
+    }
+]
