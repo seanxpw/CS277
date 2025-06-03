@@ -223,6 +223,47 @@ def eval_rnn(model: AccumRNNModel, root_dir: str):
     print("accuracy (all samples):", accuracy)
 
 
+def benchmark_batch_sizes(model: AccumRNNModel, root_dir: str, batch_sizes: list, iters: int = 50):
+    """
+    For each batch size in `batch_sizes`, measure the average time to run model(inputs)
+    over `iters` runs. Returns a list of average times (in seconds) per whole batch.
+    """
+    import torch.utils.benchmark as benchmark
+
+    # 1) Move model to GPU and load dataset once
+    model = model.to("cuda")
+    dataset = CS277Dataset(root_dir=root_dir, train=False)
+    single_input = torch.Tensor(dataset.input).to("cuda")  # shape [N, 30]
+
+    # 2) Trace & optimize (same as in eval_rnn)
+    traced = model.to_torchscript(method="trace", example_inputs=single_input)
+    traced = torch.jit.optimize_for_inference(torch.jit.script(traced.eval()))
+
+    avg_times = []
+    for k in batch_sizes:
+        # 3) Build one inputs Tensor of size [k, 30]
+        #    We simply repeat‐interleave the entire dataset once and then slice.
+        #    If k > dataset length, wrap around by repeat.
+        reps = (k // single_input.size(0)) + 1
+        inputs = single_input.repeat((reps, 1))[:k, :]  # shape [k, 30]
+
+        # 4) Warmup (one forward pass)
+        traced(inputs)
+
+        # 5) Benchmark `traced(inputs)` over `iters` runs
+        t = benchmark.Timer(
+            stmt="traced(inputs)",
+            globals={"traced": traced, "inputs": inputs},
+        )
+        times = t.timeit(iters)       # This is a tensor of `iters` results
+        avg_time = times.mean         # average time per batch (in seconds)
+        avg_times.append(avg_time)
+
+        print(f"Batch size {k:4d} → avg batch time = {avg_time:.6f} s")
+
+    return avg_times
+
+
 if __name__ == "__main__":
     # 1) DataModule arguments
     data_args = {
@@ -235,9 +276,41 @@ if __name__ == "__main__":
         print("Checkpoint already exists. Skipping training.")
         rnn_model = AccumRNNModel.load_from_checkpoint("bin-packing-rnn.ckpt")
         eval_rnn(rnn_model, data_args["root_dir"])
+
+        # ───────────────────────────────────────────────────────────────────
+        # 3) AFTER eval_rnn(...), run our batch‐size benchmark + plot speedup
+        import matplotlib.pyplot as plt
+
+        # Define which batch sizes to test
+        batch_sizes = [1] + list(range(100, 2001, 100))
+
+        # Get avg batch time for each size
+        avg_batch_times = benchmark_batch_sizes(rnn_model, data_args["root_dir"], batch_sizes, iters=50)
+
+        # Compute sample_time for batch_size=1
+        time_bs1 = avg_batch_times[0] / 1.0
+
+        # Compute speedup = (time at bs=1) / (avg_time_for_bs_k / k)
+        speedups = [
+            time_bs1 / (t_k / k)
+            for (t_k, k) in zip(avg_batch_times, batch_sizes)
+        ]
+
+        # Plot speedup vs. batch size
+        plt.figure(figsize=(12, 6))
+        plt.plot(batch_sizes, speedups, marker='o', linestyle='-')
+        plt.xlabel("Batch Size")
+        plt.ylabel("Speedup over Batch Size = 1")
+        plt.title("Model Inference Speedup vs. Batch Size")
+        plt.grid(True)
+
+        plt.savefig("rnn_speedup.png", dpi=300)
+        print("Saved speedup plot as rnn_speedup.png")
+        # ───────────────────────────────────────────────────────────────────
+
         exit(0)
 
-    # 3) Build the DataModule
+    # 4) Build the DataModule
     dm = CS277RNNDataModule(
         dataset_cls=CS277Dataset,
         data_args=data_args,
@@ -247,7 +320,7 @@ if __name__ == "__main__":
         seed=42,
     )
 
-    # 4) Build the RNN LightningModule
+    # 5) Build the RNN LightningModule
     model = AccumRNNModel(
         input_size=1,
         hidden_size=64,
@@ -256,7 +329,7 @@ if __name__ == "__main__":
         seq_len=30
     )
 
-    # 5) Trainer and fit
+    # 6) Trainer and fit
     trainer = pl.Trainer(max_epochs=100)
     trainer.fit(model, datamodule=dm)
     trainer.save_checkpoint("bin-packing-rnn.ckpt")
