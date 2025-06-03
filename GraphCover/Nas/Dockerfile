@@ -10,7 +10,7 @@ RUN git clone https://github.com/KashunCheng/nni.git && \
 
 FROM ghcr.io/astral-sh/uv:python3.10-bookworm
 
-WORKDIR /app/GraphCover/Nas
+WORKDIR /app/
 
 COPY --from=builder /nni/dist/nni-3.0.1-py3-none-any.whl /nni-3.0.1-py3-none-any.whl
 COPY ./uv.lock .
